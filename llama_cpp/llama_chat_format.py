@@ -5,6 +5,7 @@ import json
 import ctypes
 import dataclasses
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Union, Protocol
+import copy
 
 import llama_cpp.llama as llama
 import llama_cpp.llama_types as llama_types
@@ -1073,6 +1074,8 @@ class Llava15ChatHandler:
                 self.clip_model_path.encode(), 0
             )
 
+        self.current_image_embed = None
+
     def __del__(self):
         with suppress_stdout_stderr(disable=self.verbose):
             if self.clip_ctx is not None and self._clip_free is not None:
@@ -1183,6 +1186,7 @@ class Llava15ChatHandler:
                                         image_bytes_length=len(image_bytes),
                                     )
                                 )
+                                self.current_image_embed = copy.deepcopy(embed)
                             try:
                                 n_past = ctypes.c_int(llama.n_tokens)
                                 n_past_p = ctypes.pointer(n_past)
@@ -1198,6 +1202,25 @@ class Llava15ChatHandler:
                             finally:
                                 with suppress_stdout_stderr(disable=self.verbose):
                                     self._llava_cpp.llava_image_embed_free(embed)
+                        if content["type"] == "image_current":
+                            embed = copy.deepcopy(self.current_image_embed)
+
+                            try:
+                                n_past = ctypes.c_int(llama.n_tokens)
+                                n_past_p = ctypes.pointer(n_past)
+                                with suppress_stdout_stderr(disable=self.verbose):
+                                    self._llava_cpp.llava_eval_image_embed(
+                                        ctx_llama=llama.ctx,
+                                        embed=embed,
+                                        n_batch=llama.n_batch,
+                                        n_past=n_past_p,
+                                    )
+                                assert llama.n_ctx() >= n_past.value
+                                llama.n_tokens = n_past.value
+                            finally:
+                                with suppress_stdout_stderr(disable=self.verbose):
+                                    self._llava_cpp.llava_image_embed_free(embed)
+                            
             if message["role"] == "assistant" and message["content"] is not None:
                 llama.eval(
                     llama.tokenize(
