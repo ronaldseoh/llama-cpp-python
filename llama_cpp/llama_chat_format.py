@@ -1165,6 +1165,10 @@ class Llava15ChatHandler:
                                 )
                             )
                         if content["type"] == "image_url":
+                            if self.current_image_embed is not None:
+                                with suppress_stdout_stderr(disable=self.verbose):
+                                    self._llava_cpp.llava_image_embed_free(self.current_image_embed)
+
                             image_bytes = (
                                 self.load_image(content["image_url"]["url"])
                                 if isinstance(content["image_url"], dict)
@@ -1216,7 +1220,7 @@ class Llava15ChatHandler:
                                 llama.n_tokens = n_past.value
                             except:
                                 with suppress_stdout_stderr(disable=self.verbose):
-                                    self._llava_cpp.llava_image_embed_free(embed)
+                                    self._llava_cpp.llava_image_embed_free(self.current_image_embed)
                             
             if message["role"] == "assistant" and message["content"] is not None:
                 llama.eval(
