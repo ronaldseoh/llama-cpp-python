@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from typing import Optional, Union, List
+import json
+
+from typing import Dict, Optional, Union, List
 
 import llama_cpp
+import llama_cpp.llama_speculative as llama_speculative
+import llama_cpp.llama_tokenizer as llama_tokenizer
 
 from llama_cpp.server.settings import ModelSettings
 
@@ -71,9 +75,68 @@ class LlamaProxy:
             chat_handler = llama_cpp.llama_chat_format.Llava15ChatHandler(
                 clip_model_path=settings.clip_model_path, verbose=settings.verbose
             )
+        elif settings.chat_format == "hf-autotokenizer":
+            assert (
+                settings.hf_pretrained_model_name_or_path is not None
+            ), "hf_pretrained_model_name_or_path must be set for hf-autotokenizer"
+            chat_handler = (
+                llama_cpp.llama_chat_format.hf_autotokenizer_to_chat_completion_handler(
+                    settings.hf_pretrained_model_name_or_path
+                )
+            )
+        elif settings.chat_format == "hf-tokenizer-config":
+            assert (
+                settings.hf_tokenizer_config_path is not None
+            ), "hf_tokenizer_config_path must be set for hf-tokenizer-config"
+            chat_handler = llama_cpp.llama_chat_format.hf_tokenizer_config_to_chat_completion_handler(
+                json.load(open(settings.hf_tokenizer_config_path))
+            )
 
-        _model = llama_cpp.Llama(
-            model_path=settings.model,
+        tokenizer: Optional[llama_cpp.BaseLlamaTokenizer] = None
+        if settings.hf_pretrained_model_name_or_path is not None:
+            tokenizer = llama_tokenizer.LlamaHFTokenizer.from_pretrained(
+                settings.hf_pretrained_model_name_or_path
+            )
+
+        draft_model = None
+        if settings.draft_model is not None:
+            draft_model = llama_speculative.LlamaPromptLookupDecoding(
+                num_pred_tokens=settings.draft_model_num_pred_tokens
+            )
+
+        kv_overrides: Optional[Dict[str, Union[bool, int, float]]] = None
+        if settings.kv_overrides is not None:
+            assert isinstance(settings.kv_overrides, list)
+            kv_overrides = {}
+            for kv in settings.kv_overrides:
+                key, value = kv.split("=")
+                if ":" in value:
+                    value_type, value = value.split(":")
+                    if value_type == "bool":
+                        kv_overrides[key] = value.lower() in ["true", "1"]
+                    elif value_type == "int":
+                        kv_overrides[key] = int(value)
+                    elif value_type == "float":
+                        kv_overrides[key] = float(value)
+                    else:
+                        raise ValueError(f"Unknown value type {value_type}")
+
+        import functools
+
+        kwargs = {}
+
+        if settings.hf_model_repo_id is not None:
+            create_fn = functools.partial(
+                llama_cpp.Llama.from_pretrained,
+                repo_id=settings.hf_model_repo_id,
+                filename=settings.model,
+            )
+        else:
+            create_fn = llama_cpp.Llama
+            kwargs["model_path"] = settings.model
+
+        _model = create_fn(
+            **kwargs,
             # Model Params
             n_gpu_layers=settings.n_gpu_layers,
             main_gpu=settings.main_gpu,
@@ -81,6 +144,7 @@ class LlamaProxy:
             vocab_only=settings.vocab_only,
             use_mmap=settings.use_mmap,
             use_mlock=settings.use_mlock,
+            kv_overrides=kv_overrides,
             # Context Params
             seed=settings.seed,
             n_ctx=settings.n_ctx,
@@ -109,6 +173,10 @@ class LlamaProxy:
             # Chat Format Params
             chat_format=settings.chat_format,
             chat_handler=chat_handler,
+            # Speculative Decoding
+            draft_model=draft_model,
+            # Tokenizer
+            tokenizer=tokenizer,
             # Misc
             verbose=settings.verbose,
         )
@@ -123,4 +191,3 @@ class LlamaProxy:
                 cache = llama_cpp.LlamaRAMCache(capacity_bytes=settings.cache_size)
             _model.set_cache(cache)
         return _model
-

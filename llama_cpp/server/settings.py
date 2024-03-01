@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import multiprocessing
 
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Union
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
@@ -28,6 +28,10 @@ class ModelSettings(BaseSettings):
         ge=-1,
         description="The number of layers to put on the GPU. The rest will be on the CPU. Set -1 to move all to GPU.",
     )
+    split_mode: int = Field(
+        default=llama_cpp.LLAMA_SPLIT_MODE_LAYER,
+        description="The split mode to use.",
+    )
     main_gpu: int = Field(
         default=0,
         ge=0,
@@ -41,18 +45,22 @@ class ModelSettings(BaseSettings):
         default=False, description="Whether to only return the vocabulary."
     )
     use_mmap: bool = Field(
-        default=llama_cpp.llama_mmap_supported(),
+        default=llama_cpp.llama_supports_mmap(),
         description="Use mmap.",
     )
     use_mlock: bool = Field(
-        default=llama_cpp.llama_mlock_supported(),
+        default=llama_cpp.llama_supports_mlock(),
         description="Use mlock.",
+    )
+    kv_overrides: Optional[List[str]] = Field(
+        default=None,
+        description="List of model kv overrides in the format key=type:value where type is one of (bool, int, float). Valid true values are (true, TRUE, 1), otherwise false.",
     )
     # Context Params
     seed: int = Field(
         default=llama_cpp.LLAMA_DEFAULT_SEED, description="Random seed. -1 for random."
     )
-    n_ctx: int = Field(default=2048, ge=1, description="The context size.")
+    n_ctx: int = Field(default=2048, ge=0, description="The context size.")
     n_batch: int = Field(
         default=512, ge=1, description="The batch size to use per eval."
     )
@@ -66,7 +74,9 @@ class ModelSettings(BaseSettings):
         ge=0,
         description="The number of threads to use when batch processing.",
     )
-    rope_scaling_type: int = Field(default=llama_cpp.LLAMA_ROPE_SCALING_UNSPECIFIED)
+    rope_scaling_type: int = Field(
+        default=llama_cpp.LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED
+    )
     rope_freq_base: float = Field(default=0.0, description="RoPE base frequency")
     rope_freq_scale: float = Field(
         default=0.0, description="RoPE frequency scaling factor"
@@ -82,7 +92,7 @@ class ModelSettings(BaseSettings):
     logits_all: bool = Field(default=True, description="Whether to return logits.")
     embedding: bool = Field(default=True, description="Whether to use embeddings.")
     offload_kqv: bool = Field(
-        default=False, description="Whether to offload kqv to the GPU."
+        default=True, description="Whether to offload kqv to the GPU."
     )
     # Sampling Params
     last_n_tokens_size: int = Field(
@@ -100,13 +110,13 @@ class ModelSettings(BaseSettings):
         description="Path to a LoRA file to apply to the model.",
     )
     # Backend Params
-    numa: bool = Field(
+    numa: Union[bool, int] = Field(
         default=False,
         description="Enable NUMA support.",
     )
     # Chat Format Params
-    chat_format: str = Field(
-        default="llama-2",
+    chat_format: Optional[str] = Field(
+        default=None,
         description="Chat format to use.",
     )
     clip_model_path: Optional[str] = Field(
@@ -125,6 +135,29 @@ class ModelSettings(BaseSettings):
     cache_size: int = Field(
         default=2 << 30,
         description="The size of the cache in bytes. Only used if cache is True.",
+    )
+    # Tokenizer Options
+    hf_tokenizer_config_path: Optional[str] = Field(
+        default=None,
+        description="The path to a HuggingFace tokenizer_config.json file.",
+    )
+    hf_pretrained_model_name_or_path: Optional[str] = Field(
+        default=None,
+        description="The model name or path to a pretrained HuggingFace tokenizer model. Same as you would pass to AutoTokenizer.from_pretrained().",
+    )
+    # Loading from HuggingFace Model Hub
+    hf_model_repo_id: Optional[str] = Field(
+        default=None,
+        description="The model repo id to use for the HuggingFace tokenizer model.",
+    )
+    # Speculative Decoding
+    draft_model: Optional[str] = Field(
+        default=None,
+        description="Method to use for speculative decoding. One of (prompt-lookup-decoding).",
+    )
+    draft_model_num_pred_tokens: int = Field(
+        default=10,
+        description="Number of tokens to predict using the draft model.",
     )
     # Misc
     verbose: bool = Field(
@@ -162,6 +195,4 @@ class Settings(ServerSettings, ModelSettings):
 class ConfigFileSettings(ServerSettings):
     """Configuration file format settings."""
 
-    models: List[ModelSettings] = Field(
-        default=[], description="Model configs"
-    )
+    models: List[ModelSettings] = Field(default=[], description="Model configs")
